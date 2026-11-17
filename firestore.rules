@@ -1,0 +1,23 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function email() { return request.auth.token.email.lower(); }
+    function firmado() { return request.auth != null && request.auth.token.email_verified == true; }
+    function dueno() { return firmado() && email() == 'franguardia489@gmail.com'; }
+    function cfg() { return get(/databases/$(database)/documents/tienda/config).data; }
+    function autorizado() { return dueno() || (firmado() && email() in cfg().usuarios); }
+
+    // Lista de mails con acceso (la administra el dueño desde Ajustes)
+    match /tienda/config {
+      allow read: if dueno() || (firmado() && email() in resource.data.usuarios);
+      allow create: if dueno();
+      allow update: if dueno() || (firmado() && email() in resource.data.get('duenos', []));
+      allow delete: if false;
+    }
+
+    // Productos, ventas y movimientos de stock
+    match /tienda/datos/{coleccion}/{id} {
+      allow read, write: if autorizado();
+    }
+  }
+}
