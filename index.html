@@ -104,6 +104,7 @@ body:not(.app) header,body:not(.app) main{display:none}
     <button data-v="caja" class="on">Caja</button>
     <button data-v="productos">Productos</button>
     <button data-v="stock">Stock</button>
+    <button data-v="recepcion">Recepción</button>
     <button data-v="reportes">Reportes</button>
     <button data-v="ventas">Ventas</button>
     <button data-v="respaldo">Ajustes</button>
@@ -180,7 +181,7 @@ body:not(.app) header,body:not(.app) main{display:none}
   <div class="card">
     <div class="tw"><table>
       <thead><tr>
-        <th class="s" data-k="codigo">Código</th><th class="s" data-k="desc">Descripción</th><th class="s" data-k="rubro">Rubro</th>
+        <th class="s" data-k="codigo">Cód. interno</th><th class="s" data-k="barras">Cód. de barras</th><th class="s" data-k="desc">Descripción</th><th class="s" data-k="rubro">Rubro</th>
         <th class="n s" data-k="costo">Costo</th><th class="n s" data-k="precio">Precio</th><th class="n s" data-k="stock">Stock</th><th></th>
       </tr></thead>
       <tbody id="pTabla"></tbody>
@@ -193,7 +194,8 @@ body:not(.app) header,body:not(.app) main{display:none}
   <div class="grid-k" id="sKpis"></div>
   <div class="grid2">
     <div class="card">
-      <h2>Ingreso de mercadería / ajuste</h2>
+      <h2>Ajuste / baja de stock</h2>
+      <p class="muted" style="margin:-6px 0 10px;font-size:13px">La mercadería que llega con factura o remito se carga en la pestaña <b>Recepción</b>.</p>
       <div class="row">
         <label style="flex:1;min-width:200px">Código o descripción
           <input id="sScan" autocomplete="off" placeholder="Escaneá o escribí…">
@@ -214,6 +216,64 @@ body:not(.app) header,body:not(.app) main{display:none}
         <tbody id="sBajo"></tbody>
       </table></div>
     </div>
+  </div>
+</section>
+
+<!-- ============ RECEPCIÓN ============ -->
+<section class="view" id="v-recepcion">
+  <div class="grid2">
+    <div>
+      <div class="card">
+        <h2>Nueva recepción de mercadería</h2>
+        <div class="row">
+          <label style="flex:1;min-width:180px">Proveedor<input id="rcProv" list="provList" placeholder="Ej: Distribuidora del Norte" autocomplete="off"></label>
+          <label>Comprobante
+            <select id="rcTipo"><option>Factura A</option><option>Factura B</option><option>Factura C</option><option>Remito</option><option>Sin comprobante</option></select>
+          </label>
+          <label>Número<input id="rcNro" placeholder="0001-00001234" style="width:150px"></label>
+          <label>Fecha del comprobante<input type="date" id="rcFecha"></label>
+        </div>
+        <datalist id="provList"></datalist>
+        <label style="margin-top:14px"><span>Escaneá o buscá cada producto que llegó (podés poner <b>12*</b> antes para 12 unidades)</span>
+          <input id="rcScan" class="big" autocomplete="off" placeholder="Código de barras, código interno o nombre…">
+        </label>
+        <div class="sugg" id="rcSugg"></div>
+      </div>
+      <div class="card">
+        <h2>Productos recibidos</h2>
+        <div class="tw"><table>
+          <thead><tr><th>Producto</th><th class="n">Stock actual</th><th class="n">Cantidad</th><th class="n">Costo unit.</th><th class="n">Subtotal</th><th class="n">Stock nuevo</th><th></th></tr></thead>
+          <tbody id="rcItems"></tbody>
+        </table></div>
+      </div>
+    </div>
+    <div>
+      <div class="card">
+        <div class="muted">Total del comprobante</div>
+        <div class="total" id="rcTotal">$ 0</div>
+        <div class="muted" id="rcCount">0 unidades</div>
+        <hr style="border:0;border-top:1px solid var(--line);margin:14px 0">
+        <label style="flex-direction:row;align-items:center;gap:8px;color:var(--ink);font-size:14px;font-weight:400">
+          <input type="checkbox" id="rcActCosto" checked style="width:18px;height:18px"> Actualizar el costo de los productos con los de este comprobante
+        </label>
+        <div class="row" style="flex-direction:column;align-items:stretch;margin-top:14px">
+          <button class="b p big" id="rcConfirmar">Confirmar recepción</button>
+          <button class="b" id="rcCancelar">Cancelar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="row" style="margin-bottom:10px">
+      <h2 style="margin:0;flex:1">Recepciones anteriores</h2>
+      <label>Desde<input type="date" id="rhDesde"></label>
+      <label>Hasta<input type="date" id="rhHasta"></label>
+      <span class="muted" id="rhResumen"></span>
+    </div>
+    <div class="tw"><table>
+      <thead><tr><th>Fecha</th><th>Proveedor</th><th>Comprobante</th><th>Detalle</th><th class="n">Total</th><th></th></tr></thead>
+      <tbody id="rhTabla"></tbody>
+    </table></div>
   </div>
 </section>
 
@@ -320,7 +380,7 @@ body:not(.app) header,body:not(.app) main{display:none}
   </div>
   <div class="card">
     <h2>Importar productos desde CSV</h2>
-    <p class="muted">Columnas: <code>codigo;descripcion;rubro;costo;precio;stock;minimo</code> (separado por punto y coma o coma, con o sin encabezado). Si el código ya existe, se actualizan sus datos.</p>
+    <p class="muted">Columnas: <code>codigo;descripcion;rubro;costo;precio;stock;minimo;codigo_barras</code> (separado por punto y coma o coma, con o sin encabezado). El código es el interno; el de barras es opcional. Si el código interno ya existe, se actualizan sus datos.</p>
     <label class="b" style="flex-direction:row;cursor:pointer;color:var(--ink);font-size:15px;display:inline-flex">Elegir archivo CSV…<input type="file" id="csvImport" accept=".csv,.txt" hidden></label>
   </div>
 </section>
@@ -331,12 +391,13 @@ body:not(.app) header,body:not(.app) main{display:none}
   <form method="dialog" id="fProd">
     <h3 id="fTitulo">Nuevo producto</h3>
     <div class="fgrid">
-      <label class="full">Código de barras
+      <label>Código interno
         <div class="row" style="flex-wrap:nowrap">
-          <input id="fCodigo" style="flex:1" placeholder="Escaneá o escribí el código" required>
-          <button type="button" class="b sm" id="fGen" title="Para productos sin código (fiambre, verdura, etc.)">Generar interno</button>
+          <input id="fCodigo" style="flex:1;min-width:0" placeholder="Ej: 12" required>
+          <button type="button" class="b sm" id="fGen" title="Pone el próximo número libre">Siguiente</button>
         </div>
       </label>
+      <label>Código de barras<input id="fBarras" placeholder="Escaneá el código (opcional)" autocomplete="off"></label>
       <label class="full">Descripción<input id="fDesc" required placeholder="Ej: Leche entera La Serenísima 1 L"></label>
       <label>Rubro<input id="fRubro" list="rubrosList" required placeholder="Ej: Lácteos"></label>
       <label>Stock mínimo<input id="fMin" type="number" step="any" min="0" value="0"></label>

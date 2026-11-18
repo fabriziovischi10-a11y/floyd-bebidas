@@ -37,7 +37,11 @@ const mail = () => String(USER?.email || '').toLowerCase();
 const esDueno = () => mail() === DUENO || (CONFIG?.duenos || []).includes(mail());
 
 const prodById = id => DB.productos.find(p => p.id === id);
-const prodByCode = c => DB.productos.find(p => p.codigo === String(c).trim());
+// Busca por código de barras o por código interno (en ese orden)
+const prodByCode = c => { const s = String(c ?? '').trim(); if(!s) return undefined; return DB.productos.find(p => p.barras === s) || DB.productos.find(p => p.codigo === s); };
+const prodByInterno = c => { const s = String(c ?? '').trim(); return s ? DB.productos.find(p => p.codigo === s) : undefined; };
+const prodByBarras = c => { const s = String(c ?? '').trim(); return s ? DB.productos.find(p => p.barras === s) : undefined; };
+const codTxt = p => p ? (p.codigo ? 'Int. ' + p.codigo : '') + (p.barras ? ' · ' + p.barras : '') : '';
 const rubros = () => [...new Set(DB.productos.map(p => p.rubro).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es'));
 
 function pantalla(estado, msg){
@@ -47,7 +51,7 @@ function pantalla(estado, msg){
   $('#entrar').style.display = estado === 'login' ? '' : 'none';
   $('#pSalir').style.display = estado === 'sinacceso' ? '' : 'none';
 }
-function pararTodo(){ Object.values(subs).forEach(s => { try{ (s.off || s)(); }catch(e){} }); subs = {}; VENTAS.hoy = VENTAS.rep = VENTAS.hist = null; DB.productos = []; DB.movs = []; }
+function pararTodo(){ Object.values(subs).forEach(s => { try{ (s.off || s)(); }catch(e){} }); subs = {}; VENTAS.hoy = VENTAS.rep = VENTAS.hist = null; DB.productos = []; DB.movs = []; RECEP = null; rhKey = ''; }
 function errEscritura(e){ console.error(e); alert('No se pudo guardar en la nube: ' + (e.code === 'permission-denied' ? 'tu cuenta no tiene permiso.' : e.message)); }
 function errLectura(e){ console.error(e); if(e.code === 'permission-denied'){ pararTodo(); pantalla('sinacceso', `La cuenta <b>${esc(USER?.email)}</b> no tiene acceso al sistema.<br>Pedile al dueño que la agregue en Ajustes.`); } }
 
@@ -127,19 +131,19 @@ function ir(v){
 }
 function render(){
   if(!document.body.classList.contains('app')) return;
-  ({caja:renderCaja, productos:renderProductos, stock:renderStock, reportes:renderReportes, ventas:renderVentas, respaldo:renderRespaldo})[vista]();
+  ({caja:renderCaja, productos:renderProductos, stock:renderStock, recepcion:renderRecepcion, reportes:renderReportes, ventas:renderVentas, respaldo:renderRespaldo})[vista]();
 }
 /* Re-dibuja por cambios que llegan de otro dispositivo, sin pisar lo que se está escribiendo */
 function renderSuave(){
   const a = document.activeElement;
-  if(a && a.closest && a.closest('#cart, #sSel') && a.matches('input,select')) return;
+  if(a && a.closest && a.closest('#cart, #sSel, #rcItems') && a.matches('input,select')) return;
   render();
 }
 
 /* ================= Búsqueda / autocompletado ================= */
 function buscar(q, lim=12){
   const t = norm(q).split(/\s+/).filter(Boolean); if(!t.length) return [];
-  return DB.productos.filter(p => { const h = norm(p.codigo+' '+p.desc+' '+p.rubro); return t.every(w => h.includes(w)); }).slice(0, lim);
+  return DB.productos.filter(p => { const h = norm(p.codigo+' '+(p.barras||'')+' '+p.desc+' '+p.rubro); return t.every(w => h.includes(w)); }).slice(0, lim);
 }
 function stockPill(p){
   if(p.stock <= 0) return `<span class="pill out">${fmtN.format(p.stock)}</span>`;
@@ -151,7 +155,7 @@ function setupSugg(input, box, onPick){
   const draw = () => {
     if(!items.length){ box.style.display='none'; return; }
     box.style.display='block';
-    box.innerHTML = items.map((p,i) => `<div data-i="${i}" class="${i===hi?'h':''}"><span>${esc(p.desc)} <span class="muted">· ${esc(p.codigo)}</span></span><span>${money(p.precio)} · ${stockPill(p)}</span></div>`).join('');
+    box.innerHTML = items.map((p,i) => `<div data-i="${i}" class="${i===hi?'h':''}"><span>${esc(p.desc)} <span class="muted">· ${esc(codTxt(p))}</span></span><span>${money(p.precio)} · ${stockPill(p)}</span></div>`).join('');
   };
   input.addEventListener('input', () => {
     const q = input.value.replace(/^\d+(?:[.,]\d+)?\*/, '');
@@ -199,7 +203,7 @@ function renderCaja(){
   else tb.innerHTML = cart.map((it,i) => {
     const p = prodById(it.pid);
     const aviso = !p ? ' <span class="pill out">borrado</span>' : p.stock < it.cant ? ` <span class="pill out" title="Stock insuficiente">stock ${fmtN.format(p.stock)}</span>` : '';
-    return `<tr><td>${esc(p?.desc || '(producto borrado)')}${aviso}<div class="muted" style="font-size:12px">${esc(p?.codigo)}</div></td>
+    return `<tr><td>${esc(p?.desc || '(producto borrado)')}${aviso}<div class="muted" style="font-size:12px">${esc(codTxt(p))}</div></td>
       <td class="n">${money(it.precio)}</td>
       <td class="n"><input class="qty" type="number" step="any" min="0" value="${it.cant}" data-i="${i}"></td>
       <td class="n">${money(it.precio*it.cant)}</td>
@@ -231,7 +235,7 @@ function cobrar(){
   if(cart.some(it => !prodById(it.pid))){ alert('Hay un producto que se borró desde otro dispositivo. Quitalo del ticket.'); return; }
   const faltan = cart.filter(it => prodById(it.pid).stock < it.cant);
   if(faltan.length && !confirm(`Hay ${faltan.length} producto(s) con stock insuficiente en el sistema. ¿Cobrar igual? (el stock quedará negativo)`)) return;
-  const items = cart.map(it => { const p = prodById(it.pid); return {pid:p.id, codigo:p.codigo, desc:p.desc, rubro:p.rubro, cant:it.cant, precio:it.precio, costo:p.costo||0}; });
+  const items = cart.map(it => { const p = prodById(it.pid); return {pid:p.id, codigo:p.codigo, barras:p.barras||'', desc:p.desc, rubro:p.rubro, cant:it.cant, precio:it.precio, costo:p.costo||0}; });
   const total = items.reduce((s,i)=>s+i.precio*i.cant,0);
   const b = fdb.batch();
   b.set(col('ventas').doc(newId('ventas')), {fecha:new Date().toISOString(), items, total, pago:$('#pago').value, usuario:mail()});
@@ -254,12 +258,12 @@ function renderProductos(){
   let list = q.trim() ? buscar(q, 100000) : DB.productos.slice();
   if(r) list = list.filter(p => p.rubro === r);
   const {k,d} = pSort;
-  list.sort((a,b) => typeof a[k] === 'number' ? (a[k]-b[k])*d : String(a[k]||'').localeCompare(String(b[k]||''),'es')*d);
+  list.sort((a,b) => typeof a[k] === 'number' ? (a[k]-b[k])*d : String(a[k]||'').localeCompare(String(b[k]||''),'es',{numeric:true})*d);
   $('#pTabla').innerHTML = list.length ? list.map(p => `<tr>
-    <td>${esc(p.codigo)}</td><td>${esc(p.desc)}</td><td><span class="pill">${esc(p.rubro)}</span></td>
+    <td>${esc(p.codigo)}</td><td>${p.barras ? esc(p.barras) : '<span class="muted">—</span>'}</td><td>${esc(p.desc)}</td><td><span class="pill">${esc(p.rubro)}</span></td>
     <td class="n">${p.costo ? money(p.costo) : '<span class="muted">—</span>'}</td><td class="n"><b>${money(p.precio)}</b></td><td class="n">${stockPill(p)}</td>
     <td class="n"><button class="b sm" data-ed="${p.id}">Editar</button> <button class="b sm d" data-rm="${p.id}">Borrar</button></td></tr>`).join('')
-    : `<tr><td colspan="7" class="empty">${DB.productos.length ? 'Sin resultados' : 'Todavía no hay productos. Tocá “+ Nuevo producto”.'}</td></tr>`;
+    : `<tr><td colspan="8" class="empty">${DB.productos.length ? 'Sin resultados' : 'Todavía no hay productos. Tocá “+ Nuevo producto”.'}</td></tr>`;
 }
 $('#pTabla').addEventListener('click', e => {
   const ed = e.target.closest('[data-ed]'), rm = e.target.closest('[data-rm]');
@@ -268,18 +272,26 @@ $('#pTabla').addEventListener('click', e => {
 });
 $('#pNuevo').addEventListener('click', () => abrirProducto(null));
 $('#pCsv').addEventListener('click', () => {
-  download('productos.csv', toCsv([['codigo','descripcion','rubro','costo','precio','stock','minimo'], ...DB.productos.map(p => [p.codigo,p.desc,p.rubro,p.costo||'',p.precio,p.stock,p.min||0])]), 'text/csv');
+  download('productos.csv', toCsv([['codigo','descripcion','rubro','costo','precio','stock','minimo','codigo_barras'], ...DB.productos.map(p => [p.codigo,p.desc,p.rubro,p.costo||'',p.precio,p.stock,p.min||0,p.barras||''])]), 'text/csv');
 });
 
 let editando = null, despuesDeGuardar = null;
+const esBarras = c => /^\d{7,}$/.test(String(c||'').trim());   // los códigos de barras tienen 8 a 14 dígitos
+function proximoInterno(){
+  let n = 0; DB.productos.forEach(p => { if(/^\d+$/.test(p.codigo)) n = Math.max(n, +p.codigo); });
+  return String(n + 1);
+}
 function abrirProducto(p, codigo='', cb=null){
   editando = p ? p.id : null; despuesDeGuardar = cb;
   $('#fTitulo').textContent = p ? 'Editar producto' : 'Nuevo producto';
-  $('#fCodigo').value = p?.codigo ?? codigo; $('#fDesc').value = p?.desc ?? ''; $('#fRubro').value = p?.rubro ?? '';
+  if(p){ $('#fCodigo').value = p.codigo || ''; $('#fBarras').value = p.barras || ''; }
+  else if(esBarras(codigo)){ $('#fBarras').value = codigo; $('#fCodigo').value = proximoInterno(); }
+  else { $('#fCodigo').value = codigo || proximoInterno(); $('#fBarras').value = ''; }
+  $('#fDesc').value = p?.desc ?? ''; $('#fRubro').value = p?.rubro ?? '';
   $('#fCosto').value = p?.costo || ''; $('#fPrecio').value = p?.precio ?? ''; $('#fMin').value = p?.min ?? 0; $('#fStock').value = p?.stock ?? 0;
   $('#fStockWrap').style.display = p ? 'none' : '';
   $('#rubrosList').innerHTML = rubros().map(r => `<option value="${esc(r)}">`).join('');
-  margen(); $('#dlgProd').showModal(); (codigo || p ? $('#fDesc') : $('#fCodigo')).focus();
+  margen(); $('#dlgProd').showModal(); (p || codigo ? $('#fDesc') : $('#fBarras')).focus();
 }
 function margen(){
   const c = num($('#fCosto').value), pr = num($('#fPrecio').value);
@@ -287,18 +299,16 @@ function margen(){
 }
 $('#fCosto').addEventListener('input', margen); $('#fPrecio').addEventListener('input', margen);
 $('#fCancel').addEventListener('click', () => $('#dlgProd').close());
-$('#fCodigo').addEventListener('keydown', e => { if(e.key==='Enter'){ e.preventDefault(); $('#fDesc').focus(); }});
-$('#fGen').addEventListener('click', () => {
-  let n = 1; DB.productos.forEach(p => { const m = /^INT(\d+)$/.exec(p.codigo); if(m) n = Math.max(n, +m[1]+1); });
-  $('#fCodigo').value = 'INT' + String(n).padStart(4,'0');
-});
+$('#fCodigo').addEventListener('keydown', e => { if(e.key==='Enter'){ e.preventDefault(); $('#fBarras').focus(); }});
+$('#fBarras').addEventListener('keydown', e => { if(e.key==='Enter'){ e.preventDefault(); $('#fDesc').focus(); }});   // el lector manda Enter al final
+$('#fGen').addEventListener('click', () => { $('#fCodigo').value = proximoInterno(); });
 $('#fProd').addEventListener('submit', e => {
   e.preventDefault();
-  const codigo = $('#fCodigo').value.trim(), desc = $('#fDesc').value.trim(), rubro = $('#fRubro').value.trim();
-  const otro = prodByCode(codigo);
-  if(otro && otro.id !== editando){ alert(`Ese código ya lo tiene "${otro.desc}".`); return; }
+  const codigo = $('#fCodigo').value.trim(), barras = $('#fBarras').value.trim(), desc = $('#fDesc').value.trim(), rubro = $('#fRubro').value.trim();
+  const choque = [prodByInterno(codigo), prodByBarras(codigo), barras && prodByBarras(barras), barras && prodByInterno(barras)].find(o => o && o.id !== editando);
+  if(choque){ alert(`Ese código ya lo usa "${choque.desc}" (${codTxt(choque)}).`); return; }
   const rub = rubros().find(r => norm(r) === norm(rubro)) || rubro;
-  const datos = {codigo, desc, rubro:rub, costo:num($('#fCosto').value), precio:num($('#fPrecio').value), min:num($('#fMin').value)};
+  const datos = {codigo, barras, desc, rubro:rub, costo:num($('#fCosto').value), precio:num($('#fPrecio').value), min:num($('#fMin').value)};
   if(editando) col('productos').doc(editando).set(datos, {merge:true}).catch(errEscritura);
   else {
     const id = newId('productos'), stock = num($('#fStock').value), alta = new Date().toISOString();
@@ -321,10 +331,10 @@ function renderSel(){
   const p = sSel && prodById(sSel);
   if(!p){ $('#sSel').innerHTML=''; return; }
   $('#sSel').innerHTML = `<div style="border:1px solid var(--line);border-radius:8px;padding:12px">
-    <div><b>${esc(p.desc)}</b> <span class="muted">· ${esc(p.codigo)} · ${esc(p.rubro)}</span></div>
+    <div><b>${esc(p.desc)}</b> <span class="muted">· ${esc(codTxt(p))} · ${esc(p.rubro)}</span></div>
     <div class="muted" style="margin:4px 0 10px">Stock actual: ${stockPill(p)}</div>
     <div class="row">
-      <label>Tipo<select id="mTipo"><option value="ing">Ingreso (suma)</option><option value="aj">Ajuste a cantidad exacta</option><option value="baja">Baja / rotura / vencido (resta)</option></select></label>
+      <label>Tipo<select id="mTipo"><option value="aj">Ajuste a cantidad exacta (conteo)</option><option value="baja">Baja / rotura / vencido (resta)</option></select></label>
       <label>Cantidad<input id="mCant" type="number" step="any" style="width:110px"></label>
       <label>Nuevo costo (opcional)<input id="mCosto" type="number" step="any" style="width:130px" placeholder="${p.costo||''}"></label>
       <label style="flex:1;min-width:140px">Nota<input id="mNota" placeholder="Proveedor, remito…"></label>
@@ -363,6 +373,133 @@ function renderStock(){
   const p = sSel && prodById(sSel);
   if(p && !$('#sSel').contains(document.activeElement)) renderSel();
 }
+
+/* ================= Recepción de mercadería ================= */
+// Borrador de la recepción en curso (queda guardado en este dispositivo si se recarga la página)
+const LS_RC = 'floyd_recepcion_borrador';
+let rc = (() => { try{ return JSON.parse(lsGet(LS_RC)) || null; }catch(e){ return null; } })() || {items:[]};
+let RECEP = null, rhKey = '';
+const guardarBorrador = () => {
+  rc.prov = $('#rcProv').value; rc.tipo = $('#rcTipo').value; rc.nro = $('#rcNro').value; rc.fecha = $('#rcFecha').value; rc.act = $('#rcActCosto').checked;
+  lsSet(LS_RC, JSON.stringify(rc));
+};
+function cargarBorrador(){
+  $('#rcProv').value = rc.prov || ''; $('#rcTipo').value = rc.tipo || 'Factura A'; $('#rcNro').value = rc.nro || '';
+  $('#rcFecha').value = rc.fecha || ymd(new Date()); $('#rcActCosto').checked = rc.act !== false;
+}
+cargarBorrador();
+['#rcProv','#rcTipo','#rcNro','#rcFecha','#rcActCosto'].forEach(s => $(s).addEventListener('change', guardarBorrador));
+$('#rhDesde').value = ymd(new Date(Date.now()-29*864e5)); $('#rhHasta').value = ymd(new Date());
+['#rhDesde','#rhHasta'].forEach(s => $(s).addEventListener('change', renderRecepcion));
+
+setupSugg($('#rcScan'), $('#rcSugg'), (p, qty, code) => {
+  if(!p){
+    if(confirm(`No existe un producto con "${code}". ¿Querés darlo de alta ahora?`)) abrirProducto(null, /^\d+$/.test(code) ? code : '', () => { const np = prodByCode(code); if(np) rcAgregar(np, qty); $('#rcScan').focus(); });
+    return;
+  }
+  rcAgregar(p, qty);
+});
+function rcAgregar(p, qty){
+  const it = rc.items.find(i => i.pid === p.id);
+  if(it) it.cant = r3(it.cant + qty); else rc.items.push({pid:p.id, cant:qty, costo:p.costo || 0});
+  guardarBorrador(); renderRecepcion();
+  setTimeout(() => { const inp = $(`#rcItems input[data-k="cant"][data-i="${rc.items.findIndex(i => i.pid === p.id)}"]`); if(inp){ inp.focus(); inp.select(); } }, 0);
+}
+$('#rcItems').addEventListener('change', e => {
+  const i = e.target.dataset.i, k = e.target.dataset.k; if(i == null) return;
+  const v = num(e.target.value);
+  if(k === 'cant' && v <= 0) rc.items.splice(+i, 1); else rc.items[+i][k] = v;
+  guardarBorrador(); renderRecepcion();
+});
+$('#rcItems').addEventListener('keydown', e => { if(e.key === 'Enter' && e.target.matches('input')){ e.target.blur(); $('#rcScan').focus(); } });
+$('#rcItems').addEventListener('click', e => { const d = e.target.closest('[data-del]'); if(d){ rc.items.splice(+d.dataset.del, 1); guardarBorrador(); renderRecepcion(); }});
+$('#rcCancelar').addEventListener('click', () => {
+  if(rc.items.length && !confirm('¿Descartar esta recepción? No se carga nada al stock.')) return;
+  rc = {items:[]}; lsSet(LS_RC, ''); cargarBorrador(); $('#rcProv').value = ''; $('#rcNro').value = ''; renderRecepcion();
+});
+
+function renderRecepcion(){
+  // en curso
+  const tb = $('#rcItems');
+  tb.innerHTML = rc.items.length ? rc.items.map((it, i) => {
+    const p = prodById(it.pid);
+    return `<tr><td>${esc(p?.desc || '(producto borrado)')}<div class="muted" style="font-size:12px">${esc(codTxt(p))}</div></td>
+      <td class="n">${p ? stockPill(p) : '—'}</td>
+      <td class="n"><input class="qty" type="number" step="any" min="0" value="${it.cant}" data-i="${i}" data-k="cant"></td>
+      <td class="n"><input class="qty" style="width:100px" type="number" step="any" min="0" value="${it.costo}" data-i="${i}" data-k="costo"></td>
+      <td class="n">${money(it.cant * it.costo)}</td>
+      <td class="n"><b>${p ? fmtN.format(r3(p.stock + it.cant)) : '—'}</b></td>
+      <td><button class="b sm d" data-del="${i}" title="Quitar">✕</button></td></tr>`;
+  }).join('') : `<tr><td colspan="7" class="empty">Escaneá o buscá los productos que llegaron</td></tr>`;
+  const tot = rc.items.reduce((s, i) => s + i.cant * i.costo, 0), uni = rc.items.reduce((s, i) => s + i.cant, 0);
+  $('#rcTotal').textContent = money(tot);
+  $('#rcCount').textContent = `${fmtN.format(uni)} unidades · ${rc.items.length} ${rc.items.length === 1 ? 'producto' : 'productos'}`;
+  // historial
+  const d = $('#rhDesde').value, h = $('#rhHasta').value, key = d + '|' + h;
+  if(rhKey !== key){
+    rhKey = key; subs.recep?.(); RECEP = null;
+    let q = col('recepciones');
+    if(d) q = q.where('fecha', '>=', isoDesde(d));
+    if(h) q = q.where('fecha', '<', isoHasta(h));
+    subs.recep = q.orderBy('fecha').onSnapshot(s => { RECEP = s.docs.map(x => ({id:x.id, ...x.data()})); if(vista === 'recepcion') renderSuave(); }, errLectura);
+  }
+  if(RECEP == null){ $('#rhTabla').innerHTML = `<tr><td colspan="6" class="empty">Cargando…</td></tr>`; return; }
+  const provs = [...new Set(RECEP.map(r => r.proveedor).filter(Boolean))].sort();
+  $('#provList').innerHTML = provs.map(p => `<option value="${esc(p)}">`).join('');
+  const rs = RECEP.slice().reverse();
+  $('#rhResumen').textContent = `${rs.length} recepciones · ${money(rs.reduce((s, r) => s + r.total, 0))}`;
+  $('#rhTabla').innerHTML = rs.length ? rs.map(r => `<tr>
+    <td>${fechaHora(r.fecha)}${r.usuario ? `<div class="muted" style="font-size:12px">${esc(r.usuario)}</div>` : ''}</td>
+    <td>${esc(r.proveedor || '—')}</td>
+    <td>${esc(r.tipo)}${r.numero ? ` <b>${esc(r.numero)}</b>` : ''}${r.fechaComprobante ? `<div class="muted" style="font-size:12px">del ${r.fechaComprobante.split('-').reverse().join('/')}</div>` : ''}</td>
+    <td>${r.items.map(i => `${fmtN.format(i.cant)} × ${esc(i.desc)} <span class="muted">(${money(i.costo)})</span>`).join('<br>')}</td>
+    <td class="n"><b>${money(r.total)}</b></td>
+    <td><button class="b sm d" data-anrc="${r.id}">Anular</button></td></tr>`).join('') : `<tr><td colspan="6" class="empty">No hay recepciones en estas fechas</td></tr>`;
+}
+
+$('#rcConfirmar').addEventListener('click', async () => {
+  guardarBorrador();
+  if(!rc.items.length){ toast('No hay productos en la recepción'); return; }
+  if(rc.items.some(i => !prodById(i.pid))){ alert('Hay un producto que se borró desde otro dispositivo. Quitalo de la lista.'); return; }
+  const prov = $('#rcProv').value.trim(), tipo = $('#rcTipo').value, nro = $('#rcNro').value.trim(), fechaComp = $('#rcFecha').value;
+  if(!prov && !confirm('No cargaste el proveedor. ¿Confirmar igual?')) return;
+  if(tipo !== 'Sin comprobante' && !nro && !confirm(`No cargaste el número de ${tipo}. ¿Confirmar igual?`)) return;
+  if(nro){
+    try{
+      const dup = (await col('recepciones').where('numero', '==', nro).get()).docs.map(x => x.data()).filter(r => r.tipo === tipo && norm(r.proveedor) === norm(prov));
+      if(dup.length && !confirm(`Ya hay una recepción con ${tipo} ${nro} de ${prov || 'este proveedor'} (cargada el ${fechaHora(dup[0].fecha)}). ¿Cargarla igual? Se sumaría el stock dos veces.`)) return;
+    }catch(e){ /* sin conexión: se sigue */ }
+  }
+  const items = rc.items.map(i => { const p = prodById(i.pid); return {pid:p.id, codigo:p.codigo, barras:p.barras||'', desc:p.desc, rubro:p.rubro, cant:i.cant, costo:i.costo, stockAntes:p.stock}; });
+  const total = items.reduce((s, i) => s + i.cant * i.costo, 0);
+  const resumen = items.map(i => `${fmtN.format(i.cant)} × ${i.desc}`).join('\n');
+  if(!confirm(`Confirmar recepción de ${prov || 'sin proveedor'} · ${tipo}${nro ? ' ' + nro : ''}\n\n${resumen}\n\nTotal: ${money(total)}\n\nSe suma todo al stock.`)) return;
+  const act = $('#rcActCosto').checked, ahora = new Date().toISOString(), rid = newId('recepciones');
+  const nota = `${tipo}${nro ? ' ' + nro : ''}${prov ? ' · ' + prov : ''}`;
+  const b = fdb.batch();
+  b.set(col('recepciones').doc(rid), {fecha:ahora, fechaComprobante:fechaComp, proveedor:prov, tipo, numero:nro, items, total, actualizoCosto:act, usuario:mail()});
+  items.forEach(i => {
+    const cambio = {stock:inc(i.cant)}; if(act && i.costo > 0) cambio.costo = i.costo;
+    b.set(col('productos').doc(i.pid), cambio, {merge:true});
+    b.set(col('movs').doc(newId('movs')), {fecha:ahora, pid:i.pid, desc:i.desc, tipo:'Recepción', cant:i.cant, nota, recepcionId:rid, usuario:mail()});
+  });
+  b.commit().catch(errEscritura);
+  rc = {items:[]}; lsSet(LS_RC, ''); $('#rcNro').value = ''; guardarBorrador(); renderRecepcion();
+  toast(`Recepción cargada: ${fmtN.format(items.reduce((s, i) => s + i.cant, 0))} unidades sumadas al stock`); $('#rcScan').focus();
+});
+$('#rhTabla').addEventListener('click', e => {
+  const b = e.target.closest('[data-anrc]'); if(!b) return;
+  const r = (RECEP || []).find(x => x.id === b.dataset.anrc); if(!r) return;
+  if(!confirm(`¿Anular la recepción ${r.tipo} ${r.numero || ''} de ${r.proveedor || 'sin proveedor'} (${money(r.total)})?\n\nSe descuentan del stock las unidades que se habían sumado. Los costos no se vuelven atrás.`)) return;
+  const bt = fdb.batch(), ahora = new Date().toISOString();
+  bt.delete(col('recepciones').doc(r.id));
+  r.items.forEach(i => {
+    if(prodById(i.pid)) bt.set(col('productos').doc(i.pid), {stock:inc(-i.cant)}, {merge:true});
+    bt.set(col('movs').doc(newId('movs')), {fecha:ahora, pid:i.pid, desc:i.desc, tipo:'Anulación recepción', cant:-i.cant, nota:`${r.tipo} ${r.numero || ''}`.trim(), usuario:mail()});
+  });
+  bt.commit().catch(errEscritura);
+  toast('Recepción anulada');
+});
 
 /* ================= Reportes ================= */
 let rTodos = false;
@@ -502,6 +639,7 @@ async function subirTodo(d, etiqueta){
   (d.productos||[]).forEach(p => { const {id, ...r} = p; ops.push([col('productos').doc(id || newId('productos')), r]); });
   (d.ventas||[]).forEach(v => { const {id, ...r} = v; ops.push([col('ventas').doc(id || newId('ventas')), r]); });
   (d.movs||[]).forEach(m => { const {id, ...r} = m; ops.push([col('movs').doc(id || newId('movs')), r]); });
+  (d.recepciones||[]).forEach(m => { const {id, ...r} = m; ops.push([col('recepciones').doc(id || newId('recepciones')), r]); });
   for(let i = 0; i < ops.length; i += 400){
     const b = fdb.batch(); ops.slice(i, i+400).forEach(([ref, data]) => b.set(ref, data, {merge:true}));
     toast(`${etiqueta}: ${Math.min(i+400, ops.length)} de ${ops.length}…`);
@@ -521,9 +659,9 @@ $('#migrar').addEventListener('click', async () => {
 $('#bkExport').addEventListener('click', async () => {
   toast('Preparando la copia…');
   try{
-    const [p, v, m] = await Promise.all(['productos','ventas','movs'].map(n => col(n).get()));
+    const [p, v, m, rcs] = await Promise.all(['productos','ventas','movs','recepciones'].map(n => col(n).get()));
     const map = s => s.docs.map(d => ({id:d.id, ...d.data()}));
-    download(`floyd_backup_${ymd(new Date())}.json`, JSON.stringify({productos:map(p), ventas:map(v), movs:map(m), exportado:new Date().toISOString()}), 'application/json');
+    download(`floyd_backup_${ymd(new Date())}.json`, JSON.stringify({productos:map(p), ventas:map(v), movs:map(m), recepciones:map(rcs), exportado:new Date().toISOString()}), 'application/json');
     lsSet('minisuper_ultimo_backup', new Date().toISOString()); renderRespaldo();
   }catch(e){ errEscritura(e); }
 });
@@ -545,9 +683,10 @@ $('#csvImport').addEventListener('change', async e => {
     if(!line.trim()) return;
     const c = line.split(sep).map(s => s.trim().replace(/^"|"$/g,''));
     if(i === 0 && /codigo|código/i.test(c[0])) return;
-    const [codigo, desc, rubro, costo, precio, stock, min] = c; if(!codigo || !desc) return;
-    const ex = prodByCode(codigo);
+    const [codigo, desc, rubro, costo, precio, stock, min, barras] = c; if(!codigo || !desc) return;
+    const ex = prodByInterno(codigo);
     const datos = {codigo, desc, rubro:rubro||'General', costo:num(costo), precio:num(precio), min:num(min)};
+    if(barras) datos.barras = barras;
     if(stock !== undefined && stock !== '') datos.stock = num(stock);
     if(ex){ ops.push([col('productos').doc(ex.id), datos]); act++; }
     else { ops.push([col('productos').doc(newId('productos')), {stock:0, ...datos, alta:new Date().toISOString()}]); nuevos++; }
