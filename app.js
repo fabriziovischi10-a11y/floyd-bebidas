@@ -215,18 +215,56 @@ function renderCaja(){
   $('#cartCount').textContent = fmtN.format(u) + (u===1?' artículo':' artículos');
   calcVuelto();
   const vh = VENTAS.hoy;
-  $('#hoyResumen').innerHTML = vh == null ? 'Cargando…' : vh.length ? `<b style="color:var(--ink);font-size:20px">${money(vh.reduce((s,v)=>s+v.total,0))}</b><br>${vh.length} ${vh.length===1?'venta':'ventas'} (todas las cajas)` : 'Todavía no hay ventas hoy.';
+  let porMedio = {};
+  (vh || []).forEach(v => Object.entries(pagosDe(v)).forEach(([k, m]) => porMedio[k] = (porMedio[k] || 0) + m));
+  const detalle = Object.entries(porMedio).sort((a, b) => b[1] - a[1]).map(([k, m]) => `${esc(k)}: <b style="color:var(--ink)">${money(m)}</b>`).join('<br>');
+  $('#hoyResumen').innerHTML = vh == null ? 'Cargando…' : vh.length ? `<b style="color:var(--ink);font-size:20px">${money(vh.reduce((s,v)=>s+v.total,0))}</b><br>${vh.length} ${vh.length===1?'venta':'ventas'} (todas las cajas)<div style="margin-top:8px;font-size:13px">${detalle}</div>` : 'Todavía no hay ventas hoy.';
 }
+// Cuánto entró por cada medio en una venta (las ventas mixtas traen el detalle en "pagos")
+const pagosDe = v => v.pagos && Object.keys(v.pagos).length ? v.pagos : {[v.pago || 'Sin dato']: v.total};
+const pagoTxt = v => v.pago === 'Mixto' && v.pagos ? `Mixto<div class="muted" style="font-size:12px">${Object.entries(v.pagos).map(([k, m]) => `${esc(k)} ${money(m)}`).join(' + ')}</div>` : esc(v.pago);
 $('#cart').addEventListener('change', e => { if(e.target.dataset.i!=null){ const v=num(e.target.value); if(v<=0) cart.splice(+e.target.dataset.i,1); else cart[+e.target.dataset.i].cant=v; renderCaja(); }});
 $('#cart').addEventListener('click', e => { const d=e.target.closest('[data-del]'); if(d){ cart.splice(+d.dataset.del,1); renderCaja(); $('#scan').focus(); }});
-function calcVuelto(){
-  const ef = $('#pago').value === 'Efectivo';
-  $('#pagaConWrap').style.display = ef ? '' : 'none';
-  const tot = cart.reduce((s,i)=>s+i.precio*i.cant,0); const pc = num($('#pagaCon').value);
-  $('#vuelto').innerHTML = ef && pc > 0 ? (pc >= tot ? `Vuelto: <b style="color:var(--ink);font-size:18px">${money(pc-tot)}</b>` : `<span style="color:var(--bad)">Faltan ${money(tot-pc)}</span>`) : '';
+const cartTotal = () => Math.round(cart.reduce((s,i)=>s+i.precio*i.cant,0)*100)/100;
+function setPago(p){
+  $('#pago').value = p;
+  $$('#pagoSeg button').forEach(b => b.classList.toggle('on', b.dataset.p === p));
+  calcVuelto();
+  if(p === 'Mixto') $('#mxTransf').focus(); else if(p === 'Efectivo') $('#pagaCon').focus();
 }
-$('#pago').addEventListener('change', calcVuelto);
-$('#pagaCon').addEventListener('input', calcVuelto);
+$('#pagoSeg').addEventListener('click', e => { const b = e.target.closest('[data-p]'); if(b) setPago(b.dataset.p); });
+// Lee el pago mixto: si el efectivo queda vacío, se toma lo que resta
+function leerMixto(tot){
+  const t = num($('#mxTransf').value), eVacio = $('#mxEfec').value.trim() === '';
+  const e = eVacio ? Math.max(0, tot - t) : num($('#mxEfec').value);
+  return {t, e, eVacio, suma: t + e};
+}
+function calcVuelto(){
+  const p = $('#pago').value, tot = cartTotal();
+  $('#pagaConWrap').style.display = p === 'Efectivo' ? '' : 'none';
+  $('#mixtoWrap').style.display = p === 'Mixto' ? 'flex' : 'none';
+  let html = '';
+  if(p === 'Efectivo'){
+    const pc = num($('#pagaCon').value);
+    if(pc > 0) html = pc >= tot ? `Vuelto: <b style="color:var(--ink);font-size:18px">${money(pc-tot)}</b>` : `<span style="color:var(--bad)">Faltan ${money(tot-pc)}</span>`;
+  } else if(p === 'Mixto'){
+    const {t, e, eVacio, suma} = leerMixto(tot);
+    $('#mxEfec').placeholder = tot - t > 0 ? `Resta ${money(tot - t)}` : 'Lo que resta';
+    if(t > tot) html = `<span style="color:var(--bad)">La transferencia es mayor que el total</span>`;
+    else if(t > 0 || !eVacio){
+      html = `Transferencia <b style="color:var(--ink)">${money(t)}</b> + Efectivo <b style="color:var(--ink)">${money(Math.min(e, tot - t))}</b>`;
+      html += suma < tot ? `<br><span style="color:var(--bad)">Faltan ${money(tot - suma)}</span>`
+            : suma > tot ? `<br>Vuelto: <b style="color:var(--ink);font-size:18px">${money(suma - tot)}</b>`
+            : `<br><span class="okpago">Pago completo ✓</span>`;
+    } else html = `Total ${money(tot)}: cargá cuánto pasa por transferencia y cuánto en efectivo.`;
+  }
+  $('#vuelto').innerHTML = html;
+}
+['#pagaCon','#mxTransf','#mxEfec'].forEach(s => $(s).addEventListener('input', calcVuelto));
+['#pagaCon','#mxTransf','#mxEfec'].forEach(s => $(s).addEventListener('keydown', e => {
+  if(e.key !== 'Enter') return; e.preventDefault();
+  if(s === '#mxTransf') $('#mxEfec').focus(); else cobrar();
+}));
 $('#vaciar').addEventListener('click', () => { if(cart.length && confirm('¿Cancelar el ticket actual?')){ cart=[]; renderCaja(); $('#scan').focus(); }});
 $('#cobrar').addEventListener('click', cobrar);
 document.addEventListener('keydown', e => { if(e.key === 'F2' && vista === 'caja' && document.body.classList.contains('app')){ e.preventDefault(); cobrar(); }});
@@ -236,12 +274,27 @@ function cobrar(){
   const faltan = cart.filter(it => prodById(it.pid).stock < it.cant);
   if(faltan.length && !confirm(`Hay ${faltan.length} producto(s) con stock insuficiente en el sistema. ¿Cobrar igual? (el stock quedará negativo)`)) return;
   const items = cart.map(it => { const p = prodById(it.pid); return {pid:p.id, codigo:p.codigo, barras:p.barras||'', desc:p.desc, rubro:p.rubro, cant:it.cant, precio:it.precio, costo:p.costo||0}; });
-  const total = items.reduce((s,i)=>s+i.precio*i.cant,0);
+  const total = Math.round(items.reduce((s,i)=>s+i.precio*i.cant,0)*100)/100;
+  const pago = $('#pago').value;
+  let pagos, vuelto = 0;
+  if(pago === 'Mixto'){
+    const {t, e, suma} = leerMixto(total);
+    if(t <= 0){ alert('En el pago mixto cargá cuánto pasa por transferencia.'); $('#mxTransf').focus(); return; }
+    if(t > total){ alert('La transferencia no puede ser mayor que el total.'); $('#mxTransf').focus(); return; }
+    if(suma < total){ alert(`Faltan ${money(total - suma)} para completar el pago.`); $('#mxEfec').focus(); return; }
+    if(t >= total){ alert('La transferencia cubre todo el total: elegí "Transferencia" en vez de pago mixto.'); return; }
+    pagos = {Transferencia: t, Efectivo: Math.round((total - t)*100)/100};
+    vuelto = Math.round((suma - total)*100)/100;
+  } else {
+    pagos = {[pago]: total};
+    if(pago === 'Efectivo'){ const pc = num($('#pagaCon').value); if(pc > 0 && pc < total){ alert(`Con ${money(pc)} faltan ${money(total - pc)}.`); return; } if(pc > total) vuelto = Math.round((pc - total)*100)/100; }
+  }
   const b = fdb.batch();
-  b.set(col('ventas').doc(newId('ventas')), {fecha:new Date().toISOString(), items, total, pago:$('#pago').value, usuario:mail()});
+  b.set(col('ventas').doc(newId('ventas')), {fecha:new Date().toISOString(), items, total, pago, pagos, vuelto, usuario:mail()});
   items.forEach(i => b.set(col('productos').doc(i.pid), {stock:inc(-i.cant)}, {merge:true}));
   b.commit().catch(errEscritura);   // sin internet queda guardado y se sube solo
-  cart=[]; $('#pagaCon').value=''; renderCaja(); toast('Venta registrada: '+money(total)); $('#scan').focus();
+  cart=[]; ['#pagaCon','#mxTransf','#mxEfec'].forEach(s => $(s).value = ''); setPago('Efectivo'); renderCaja();
+  toast('Venta registrada: ' + money(total) + (vuelto ? ' · vuelto ' + money(vuelto) : '')); $('#scan').focus();
 }
 
 /* ================= Productos ================= */
@@ -524,7 +577,7 @@ function datosReporte(){
   escucharVentas('rep', d, h);
   const ventas = VENTAS.rep || [];
   const lineas = [];
-  ventas.forEach(v => v.items.forEach(i => { if(!rub || i.rubro === rub) lineas.push({...i, fecha:v.fecha, pago:v.pago, vid:v.id}); }));
+  ventas.forEach(v => v.items.forEach(i => { if(!rub || i.rubro === rub) lineas.push({...i, fecha:v.fecha, pago:v.pago, pagos:v.pagos, vtotal:v.total, vid:v.id}); }));
   return {d, h, rub, ventas, lineas, cargando: VENTAS.rep == null};
 }
 function renderReportes(){
@@ -559,7 +612,10 @@ function renderReportes(){
   const rr = Object.entries(porRub).sort((a,b) => b[1].imp - a[1].imp); const maxR = Math.max(1, ...rr.map(r=>r[1].imp));
   $('#rRubros').innerHTML = rr.length ? rr.map(([r,o]) => `<tr><td>${esc(r)}</td><td class="n">${fmtN.format(o.cant)}</td><td class="n">${money(o.imp)}</td><td class="n">${fmtN.format(imp? o.imp/imp*100 : 0)}%</td><td class="barcell"><div class="bar" style="width:${o.imp/maxR*100}%"></div></td></tr>`).join('') : `<tr><td colspan="5" class="empty">—</td></tr>`;
 
-  const porPago = {}; lineas.forEach(l => porPago[l.pago] = (porPago[l.pago]||0) + l.precio*l.cant);
+  // por medio de pago: las ventas mixtas se reparten en proporción a lo que entró por cada medio
+  const porPago = {};
+  lineas.forEach(l => { const imp = l.precio*l.cant, ps = pagosDe({pago:l.pago, pagos:l.pagos, total:l.vtotal}); const tv = Object.values(ps).reduce((s, m) => s + m, 0) || 1;
+    Object.entries(ps).forEach(([k, m]) => porPago[k] = (porPago[k]||0) + imp * m / tv); });
   $('#rPagos').innerHTML = Object.entries(porPago).sort((a,b)=>b[1]-a[1]).map(([k,v]) => `<tr><td>${esc(k)}</td><td class="n">${money(v)}</td><td class="n muted">${fmtN.format(imp? v/imp*100:0)}%</td></tr>`).join('') || `<tr><td class="empty">—</td></tr>`;
 
   const nombres = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
@@ -589,7 +645,7 @@ function renderVentas(){
   const vs = VENTAS.hist.slice().reverse();
   $('#vResumen').textContent = `${vs.length} ventas · ${money(vs.reduce((s,v)=>s+v.total,0))}`;
   $('#vTabla').innerHTML = vs.length ? vs.slice(0,500).map(v => `<tr><td>${fechaHora(v.fecha)}${v.usuario?`<div class="muted" style="font-size:12px">${esc(v.usuario)}</div>`:''}</td>
-    <td>${v.items.map(i => `${fmtN.format(i.cant)} × ${esc(i.desc)}`).join('<br>')}</td><td>${esc(v.pago)}</td>
+    <td>${v.items.map(i => `${fmtN.format(i.cant)} × ${esc(i.desc)}`).join('<br>')}</td><td>${pagoTxt(v)}</td>
     <td class="n"><b>${money(v.total)}</b></td><td><button class="b sm d" data-anular="${v.id}">Anular</button></td></tr>`).join('') : `<tr><td colspan="5" class="empty">Sin ventas en el período</td></tr>`;
 }
 $('#vTabla').addEventListener('click', e => {
@@ -696,6 +752,63 @@ $('#csvImport').addEventListener('change', async e => {
     toast(`${nuevos} nuevos, ${act} actualizados`);
   }catch(err){ errEscritura(err); }
 });
+
+/* ================= Lector de código de barras con la cámara ================= */
+// Usa la librería html5-qrcode (se carga recién la primera vez que se abre la cámara)
+let lector = null, camDestino = null, camPrefijo = '';
+function cargarLector(){
+  if(window.Html5Qrcode) return Promise.resolve();
+  return new Promise((ok, mal) => {
+    const s = document.createElement('script');
+    s.src = 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js';
+    s.onload = ok; s.onerror = () => mal(new Error('no se pudo descargar el lector (¿hay internet?)'));
+    document.head.appendChild(s);
+  });
+}
+async function abrirCamara(dest){
+  camDestino = dest;
+  const m = $('#' + dest).value.trim().match(/^(\d+(?:[.,]\d+)?\*)/); camPrefijo = m ? m[1] : '';   // respeta "3*" escrito antes
+  $('#camMsg').textContent = 'Abriendo la cámara…';
+  if(!$('#dlgCam').open) $('#dlgCam').showModal();
+  try{
+    if(!window.isSecureContext || !navigator.mediaDevices) throw new Error('este navegador no permite usar la cámara acá');
+    await cargarLector();
+    const F = window.Html5QrcodeSupportedFormats;
+    lector = new Html5Qrcode('lector', {
+      formatsToSupport: [F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.CODE_128, F.CODE_39, F.ITF, F.CODABAR, F.QR_CODE],
+      experimentalFeatures: {useBarCodeDetectorIfSupported: true}, verbose: false
+    });
+    await lector.start({facingMode: 'environment'},
+      {fps: 12, qrbox: (w, h) => ({width: Math.max(120, Math.floor(w * 0.85)), height: Math.max(80, Math.floor(Math.min(h * 0.45, 170)))})},
+      txt => codigoLeido(txt), () => {});
+    $('#camMsg').textContent = 'Apuntá al código de barras, que entre en el recuadro. Se lee solo.';
+  }catch(e){
+    lector = null;
+    const msg = String(e?.message || e);
+    $('#camMsg').textContent = /Permission|NotAllowed/i.test(msg) ? 'No hay permiso para usar la cámara. Tocá el candado al lado de la dirección y permití la cámara.'
+      : /NotFound|Requested device not found/i.test(msg) ? 'No se encontró ninguna cámara en este dispositivo.'
+      : 'No se pudo abrir la cámara: ' + msg;
+  }
+}
+async function cerrarCamara(){
+  const l = lector; lector = null;
+  if(l){ try{ await l.stop(); }catch(e){} try{ l.clear(); }catch(e){} }
+  if($('#dlgCam').open) $('#dlgCam').close();
+}
+function codigoLeido(txt){
+  if(!lector) return;                       // ya se leyó uno
+  const dest = camDestino, codigo = String(txt).trim();
+  try{ navigator.vibrate && navigator.vibrate(80); }catch(e){}
+  cerrarCamara();
+  const inp = $('#' + dest);
+  inp.value = (dest === 'fBarras' ? '' : camPrefijo) + codigo;
+  inp.focus();
+  if(dest !== 'fBarras') inp.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}));
+  else toast('Código leído: ' + codigo);
+}
+document.addEventListener('click', e => { const b = e.target.closest('[data-cam]'); if(b){ e.preventDefault(); abrirCamara(b.dataset.cam); } });
+$('#camCerrar').addEventListener('click', cerrarCamara);
+$('#dlgCam').addEventListener('cancel', e => { e.preventDefault(); cerrarCamara(); });
 
 /* ================= Arranque ================= */
 $('#rDesde').value = ymd(new Date(Date.now()-29*864e5)); $('#rHasta').value = ymd(new Date());

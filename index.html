@@ -83,6 +83,15 @@ dialog h3{margin:0 0 14px}
 .seg button:last-child{border-right:0}
 .seg button.on{background:var(--accent);color:#fff}
 .spacer{flex:1}
+.scanrow{display:flex;gap:8px;align-items:stretch}
+.scanrow input{flex:1;min-width:0}
+.cam{white-space:nowrap}
+.pagoSeg{display:flex}
+.pagoSeg button{flex:1;padding:10px 6px;font-weight:600}
+#dlgCam{width:min(520px,96vw)}
+#lector{width:100%;min-height:240px;background:#000;border-radius:8px;overflow:hidden}
+#lector video{width:100% !important;display:block}
+.okpago{color:#4ade80;font-weight:600}
 #userBox{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted);padding-bottom:6px;align-self:center}
 .sync{display:inline-flex;align-items:center;gap:6px}
 .sync::before{content:"";width:8px;height:8px;border-radius:50%;background:#22c55e}
@@ -124,7 +133,7 @@ body:not(.app) header,body:not(.app) main{display:none}
     <div>
       <div class="card">
         <label><span>Escaneá el código de barras o buscá por nombre (podés poner <b>3*</b> antes del código para 3 unidades)</span>
-          <input id="scan" class="big" autocomplete="off" placeholder="Código o descripción…">
+          <div class="scanrow"><input id="scan" class="big" autocomplete="off" placeholder="Código o descripción…"><button type="button" class="b cam" data-cam="scan" title="Leer el código con la cámara">📷 Cámara</button></div>
         </label>
         <div class="sugg" id="sugg"></div>
       </div>
@@ -143,14 +152,22 @@ body:not(.app) header,body:not(.app) main{display:none}
         <div class="muted" id="cartCount">0 artículos</div>
         <hr style="border:0;border-top:1px solid var(--line);margin:14px 0">
         <div class="row" style="flex-direction:column;align-items:stretch">
-          <label>Medio de pago
-            <select id="pago">
-              <option>Efectivo</option><option>Débito</option><option>Crédito</option><option>Transferencia</option><option>Mercado Pago</option>
-            </select>
-          </label>
+          <div class="muted" style="font-size:12px;font-weight:500">Medio de pago</div>
+          <div class="seg pagoSeg" id="pagoSeg">
+            <button type="button" data-p="Efectivo" class="on">Efectivo</button><button type="button" data-p="Transferencia">Transferencia</button><button type="button" data-p="Mixto">Pago mixto</button>
+          </div>
+          <input type="hidden" id="pago" value="Efectivo">
           <label id="pagaConWrap">Paga con
             <input id="pagaCon" type="number" min="0" step="any" placeholder="0">
           </label>
+          <div id="mixtoWrap" style="display:none;flex-direction:column;gap:10px">
+            <label>Transferencia · paga con
+              <input id="mxTransf" type="number" min="0" step="any" placeholder="0">
+            </label>
+            <label>Efectivo · paga con
+              <input id="mxEfec" type="number" min="0" step="any" placeholder="Lo que resta">
+            </label>
+          </div>
           <div id="vuelto" class="muted"></div>
           <button class="b p big" id="cobrar">Cobrar (F2)</button>
           <button class="b" id="vaciar">Cancelar ticket</button>
@@ -198,7 +215,7 @@ body:not(.app) header,body:not(.app) main{display:none}
       <p class="muted" style="margin:-6px 0 10px;font-size:13px">La mercadería que llega con factura o remito se carga en la pestaña <b>Recepción</b>.</p>
       <div class="row">
         <label style="flex:1;min-width:200px">Código o descripción
-          <input id="sScan" autocomplete="off" placeholder="Escaneá o escribí…">
+          <div class="scanrow"><input id="sScan" autocomplete="off" placeholder="Escaneá o escribí…"><button type="button" class="b cam" data-cam="sScan" title="Leer el código con la cámara">📷</button></div>
         </label>
       </div>
       <div class="sugg" id="sSugg"></div>
@@ -235,7 +252,7 @@ body:not(.app) header,body:not(.app) main{display:none}
         </div>
         <datalist id="provList"></datalist>
         <label style="margin-top:14px"><span>Escaneá o buscá cada producto que llegó (podés poner <b>12*</b> antes para 12 unidades)</span>
-          <input id="rcScan" class="big" autocomplete="off" placeholder="Código de barras, código interno o nombre…">
+          <div class="scanrow"><input id="rcScan" class="big" autocomplete="off" placeholder="Código de barras, código interno o nombre…"><button type="button" class="b cam" data-cam="rcScan" title="Leer el código con la cámara">📷 Cámara</button></div>
         </label>
         <div class="sugg" id="rcSugg"></div>
       </div>
@@ -397,7 +414,7 @@ body:not(.app) header,body:not(.app) main{display:none}
           <button type="button" class="b sm" id="fGen" title="Pone el próximo número libre">Siguiente</button>
         </div>
       </label>
-      <label>Código de barras<input id="fBarras" placeholder="Escaneá el código (opcional)" autocomplete="off"></label>
+      <label>Código de barras<div class="scanrow"><input id="fBarras" placeholder="Escaneá el código (opcional)" autocomplete="off"><button type="button" class="b sm cam" data-cam="fBarras" title="Leer el código con la cámara">📷</button></div></label>
       <label class="full">Descripción<input id="fDesc" required placeholder="Ej: Leche entera La Serenísima 1 L"></label>
       <label>Rubro<input id="fRubro" list="rubrosList" required placeholder="Ej: Lácteos"></label>
       <label>Stock mínimo<input id="fMin" type="number" step="any" min="0" value="0"></label>
@@ -430,6 +447,15 @@ body:not(.app) header,body:not(.app) main{display:none}
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="firebase-config.js?v=2"></script>
-<script src="app.js?v=2"></script>
+<!-- Lector con cámara -->
+<dialog id="dlgCam">
+  <div style="padding:18px">
+    <h3 style="margin:0 0 12px">Leer código de barras</h3>
+    <div id="lector"></div>
+    <p class="muted" id="camMsg" style="margin:12px 0">Abriendo la cámara…</p>
+    <div class="row" style="justify-content:flex-end"><button type="button" class="b" id="camCerrar">Cancelar</button></div>
+  </div>
+</dialog>
+<script src="app.js?v=3"></script>
 </body>
 </html>
