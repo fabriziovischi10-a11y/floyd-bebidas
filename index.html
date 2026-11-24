@@ -83,6 +83,10 @@ dialog h3{margin:0 0 14px}
 .seg button:last-child{border-right:0}
 .seg button.on{background:var(--accent);color:#fff}
 .spacer{flex:1}
+.dtobox{display:inline-flex;gap:4px;align-items:center}
+.dtobox input{width:84px;text-align:right}
+.dtobox select{padding:8px 4px}
+.dtopill{display:inline-block;margin-top:2px;padding:1px 7px;border-radius:99px;font-size:11px;background:rgba(250,204,21,.15);color:var(--gold)}
 .scanrow{display:flex;gap:8px;align-items:stretch}
 .scanrow input{flex:1;min-width:0}
 .cam{white-space:nowrap}
@@ -140,7 +144,7 @@ body:not(.app) header,body:not(.app) main{display:none}
       <div class="card">
         <h2>Ticket actual</h2>
         <div class="tw"><table>
-          <thead><tr><th>Producto</th><th class="n">Precio</th><th class="n">Cant.</th><th class="n">Subtotal</th><th></th></tr></thead>
+          <thead><tr><th>Producto</th><th class="n">Precio</th><th class="n">Cant.</th><th class="n" title="Descuento en % o en $ para ese renglón">Desc.</th><th class="n">Subtotal</th><th></th></tr></thead>
           <tbody id="cart"></tbody>
         </table></div>
       </div>
@@ -456,6 +460,6 @@ body:not(.app) header,body:not(.app) main{display:none}
     <div class="row" style="justify-content:flex-end"><button type="button" class="b" id="camCerrar">Cancelar</button></div>
   </div>
 </dialog>
-<script src="app.js?v=3"></script>
+<script src="app.js?v=4"></script>
 </body>
 </html>

@@ -193,26 +193,36 @@ setupSugg($('#scan'), $('#sugg'), (p, qty, code) => {
 });
 function agregar(p, qty){
   const it = cart.find(i => i.pid === p.id);
-  if(it) it.cant += qty; else cart.push({pid:p.id, cant:qty, precio:p.precio});
+  if(it) it.cant += qty; else cart.push({pid:p.id, cant:qty, precio:p.precio, dto:0, dtoTipo:'%'});
   renderCaja();
 }
+// Descuento de un renglón del ticket: en % del renglón o en $ (monto total del renglón)
+const r2 = n => Math.round(n*100)/100;
+function dtoLinea(it){
+  const bruto = it.precio*it.cant, v = num(it.dto);
+  if(!(v > 0) || bruto <= 0) return 0;
+  return r2(it.dtoTipo === '$' ? Math.min(v, bruto) : bruto * Math.min(v, 100) / 100);
+}
+const netoLinea = it => r2(it.precio*it.cant - dtoLinea(it));
+const dtoTxt = it => num(it.dto) > 0 ? (it.dtoTipo === '$' ? money(it.dto) : fmtN.format(it.dto) + '%') : '';
 function renderCaja(){
   const hoy = ymd(new Date()); escucharVentas('hoy', hoy, hoy);
   const tb = $('#cart');
-  if(!cart.length) tb.innerHTML = `<tr><td colspan="5" class="empty">Escaneá un producto para empezar</td></tr>`;
+  if(!cart.length) tb.innerHTML = `<tr><td colspan="6" class="empty">Escaneá un producto para empezar</td></tr>`;
   else tb.innerHTML = cart.map((it,i) => {
     const p = prodById(it.pid);
     const aviso = !p ? ' <span class="pill out">borrado</span>' : p.stock < it.cant ? ` <span class="pill out" title="Stock insuficiente">stock ${fmtN.format(p.stock)}</span>` : '';
     return `<tr><td>${esc(p?.desc || '(producto borrado)')}${aviso}<div class="muted" style="font-size:12px">${esc(codTxt(p))}</div></td>
       <td class="n">${money(it.precio)}</td>
-      <td class="n"><input class="qty" type="number" step="any" min="0" value="${it.cant}" data-i="${i}"></td>
-      <td class="n">${money(it.precio*it.cant)}</td>
+      <td class="n"><input class="qty" type="number" step="any" min="0" value="${it.cant}" data-i="${i}" data-k="cant"></td>
+      <td class="n"><span class="dtobox"><input type="number" step="any" min="0" value="${num(it.dto) || ''}" placeholder="0" data-i="${i}" data-k="dto" title="Descuento"><select data-i="${i}" data-k="dtoTipo" title="% del renglón o $ de descuento"><option value="%"${it.dtoTipo !== '$' ? ' selected' : ''}>%</option><option value="$"${it.dtoTipo === '$' ? ' selected' : ''}>$</option></select></span></td>
+      <td class="n">${dtoLinea(it) ? `<s class="muted" style="font-size:12px">${money(it.precio*it.cant)}</s><br><b>${money(netoLinea(it))}</b><br><span class="dtopill">−${money(dtoLinea(it))}</span>` : money(it.precio*it.cant)}</td>
       <td><button class="b sm d" data-del="${i}" title="Quitar">✕</button></td></tr>`;
   }).join('');
-  const tot = cart.reduce((s,i) => s + i.precio*i.cant, 0);
+  const tot = cartTotal(), dtoTot = r2(cart.reduce((s,i) => s + dtoLinea(i), 0));
   $('#cartTotal').textContent = money(tot);
   const u = cart.reduce((s,i)=>s+i.cant,0);
-  $('#cartCount').textContent = fmtN.format(u) + (u===1?' artículo':' artículos');
+  $('#cartCount').innerHTML = fmtN.format(u) + (u===1?' artículo':' artículos') + (dtoTot ? ` · <span style="color:var(--gold)">descuento −${money(dtoTot)}</span>` : '');
   calcVuelto();
   const vh = VENTAS.hoy;
   let porMedio = {};
@@ -223,9 +233,22 @@ function renderCaja(){
 // Cuánto entró por cada medio en una venta (las ventas mixtas traen el detalle en "pagos")
 const pagosDe = v => v.pagos && Object.keys(v.pagos).length ? v.pagos : {[v.pago || 'Sin dato']: v.total};
 const pagoTxt = v => v.pago === 'Mixto' && v.pagos ? `Mixto<div class="muted" style="font-size:12px">${Object.entries(v.pagos).map(([k, m]) => `${esc(k)} ${money(m)}`).join(' + ')}</div>` : esc(v.pago);
-$('#cart').addEventListener('change', e => { if(e.target.dataset.i!=null){ const v=num(e.target.value); if(v<=0) cart.splice(+e.target.dataset.i,1); else cart[+e.target.dataset.i].cant=v; renderCaja(); }});
+$('#cart').addEventListener('change', e => {
+  const i = e.target.dataset.i; if(i == null) return;
+  const k = e.target.dataset.k || 'cant', it = cart[+i]; if(!it) return;
+  if(k === 'cant'){ const v = num(e.target.value); if(v <= 0) cart.splice(+i, 1); else it.cant = v; }
+  else if(k === 'dto'){
+    let v = Math.max(0, num(e.target.value));
+    if(it.dtoTipo !== '$' && v > 100){ v = 100; toast('El descuento en % no puede pasar de 100'); }
+    if(it.dtoTipo === '$' && v > it.precio*it.cant){ v = r2(it.precio*it.cant); toast('El descuento no puede ser mayor que el renglón'); }
+    it.dto = v;
+  }
+  else if(k === 'dtoTipo'){ it.dtoTipo = e.target.value; if(it.dtoTipo === '%' && num(it.dto) > 100) it.dto = 100; }
+  renderCaja();
+});
+$('#cart').addEventListener('keydown', e => { if(e.key === 'Enter' && e.target.matches('input')){ e.preventDefault(); e.target.blur(); $('#scan').focus(); } });
 $('#cart').addEventListener('click', e => { const d=e.target.closest('[data-del]'); if(d){ cart.splice(+d.dataset.del,1); renderCaja(); $('#scan').focus(); }});
-const cartTotal = () => Math.round(cart.reduce((s,i)=>s+i.precio*i.cant,0)*100)/100;
+const cartTotal = () => r2(cart.reduce((s,i) => s + netoLinea(i), 0));
 function setPago(p){
   $('#pago').value = p;
   $$('#pagoSeg button').forEach(b => b.classList.toggle('on', b.dataset.p === p));
@@ -273,8 +296,14 @@ function cobrar(){
   if(cart.some(it => !prodById(it.pid))){ alert('Hay un producto que se borró desde otro dispositivo. Quitalo del ticket.'); return; }
   const faltan = cart.filter(it => prodById(it.pid).stock < it.cant);
   if(faltan.length && !confirm(`Hay ${faltan.length} producto(s) con stock insuficiente en el sistema. ¿Cobrar igual? (el stock quedará negativo)`)) return;
-  const items = cart.map(it => { const p = prodById(it.pid); return {pid:p.id, codigo:p.codigo, barras:p.barras||'', desc:p.desc, rubro:p.rubro, cant:it.cant, precio:it.precio, costo:p.costo||0}; });
-  const total = Math.round(items.reduce((s,i)=>s+i.precio*i.cant,0)*100)/100;
+  // "precio" queda como precio unitario final (con descuento), así los reportes y la ganancia salen netos
+  const items = cart.map(it => {
+    const p = prodById(it.pid), d = dtoLinea(it);
+    const item = {pid:p.id, codigo:p.codigo, barras:p.barras||'', desc:p.desc, rubro:p.rubro, cant:it.cant, precio: d ? netoLinea(it) / it.cant : it.precio, costo:p.costo||0};
+    if(d){ item.precioLista = it.precio; item.descuento = d; item.dto = dtoTxt(it); }
+    return item;
+  });
+  const total = cartTotal(), descuento = r2(items.reduce((s,i) => s + (i.descuento||0), 0));
   const pago = $('#pago').value;
   let pagos, vuelto = 0;
   if(pago === 'Mixto'){
@@ -290,7 +319,7 @@ function cobrar(){
     if(pago === 'Efectivo'){ const pc = num($('#pagaCon').value); if(pc > 0 && pc < total){ alert(`Con ${money(pc)} faltan ${money(total - pc)}.`); return; } if(pc > total) vuelto = Math.round((pc - total)*100)/100; }
   }
   const b = fdb.batch();
-  b.set(col('ventas').doc(newId('ventas')), {fecha:new Date().toISOString(), items, total, pago, pagos, vuelto, usuario:mail()});
+  b.set(col('ventas').doc(newId('ventas')), {fecha:new Date().toISOString(), items, total, descuento, pago, pagos, vuelto, usuario:mail()});
   items.forEach(i => b.set(col('productos').doc(i.pid), {stock:inc(-i.cant)}, {merge:true}));
   b.commit().catch(errEscritura);   // sin internet queda guardado y se sube solo
   cart=[]; ['#pagaCon','#mxTransf','#mxEfec'].forEach(s => $(s).value = ''); setPago('Efectivo'); renderCaja();
@@ -590,7 +619,8 @@ function renderReportes(){
   const tickets = new Set(lineas.map(l=>l.vid)).size;
   $('#rKpis').innerHTML = [
     ['Total vendido', money(imp)], ['Unidades', fmtN.format(uni)], ['Tickets', fmtN.format(tickets)],
-    ['Ticket promedio', money(tickets ? imp/tickets : 0)], ['Ganancia estimada', money(gan)]
+    ['Ticket promedio', money(tickets ? imp/tickets : 0)], ['Ganancia estimada', money(gan)],
+    ['Descuentos dados', money(lineas.reduce((s,l) => s + (l.descuento||0), 0))]
   ].map(([l,v]) => `<div class="kpi"><div class="l">${l}${rub?' · '+esc(rub):''}</div><div class="v">${v}</div></div>`).join('');
 
   const porDia = {}; lineas.forEach(l => { const f = ymd(l.fecha); porDia[f] = (porDia[f]||0) + l.precio*l.cant; });
@@ -645,7 +675,7 @@ function renderVentas(){
   const vs = VENTAS.hist.slice().reverse();
   $('#vResumen').textContent = `${vs.length} ventas · ${money(vs.reduce((s,v)=>s+v.total,0))}`;
   $('#vTabla').innerHTML = vs.length ? vs.slice(0,500).map(v => `<tr><td>${fechaHora(v.fecha)}${v.usuario?`<div class="muted" style="font-size:12px">${esc(v.usuario)}</div>`:''}</td>
-    <td>${v.items.map(i => `${fmtN.format(i.cant)} × ${esc(i.desc)}`).join('<br>')}</td><td>${pagoTxt(v)}</td>
+    <td>${v.items.map(i => `${fmtN.format(i.cant)} × ${esc(i.desc)}${i.descuento ? ` <span class="dtopill">−${money(i.descuento)}${i.dto && i.dto.endsWith('%') ? ' (' + esc(i.dto) + ')' : ''}</span>` : ''}`).join('<br>')}</td><td>${pagoTxt(v)}</td>
     <td class="n"><b>${money(v.total)}</b></td><td><button class="b sm d" data-anular="${v.id}">Anular</button></td></tr>`).join('') : `<tr><td colspan="5" class="empty">Sin ventas en el período</td></tr>`;
 }
 $('#vTabla').addEventListener('click', e => {
